@@ -1,4 +1,19 @@
+// includes
+#include <stdio.h>
+#include <time.h>
+#include <stdlib.h>
+#include <wiringPi.h>
+#include "adc_lib.h"
+#include <stdbool.h>
 
+// random defines
+#define STR(x) #x
+#define ASSERT(cond) printf("assertion '%s' failed at line %d\n", STR(cond), __LINE__);
+
+// LED defines
+#define LED_PIN 8 //GPIO2
+
+// Protocol defines
 #define PREAMBLE 0b10101010
 #define PREAMBLE_LENGTH 8
 #define POSTAMBLE 0b00100100 // TODO
@@ -9,17 +24,16 @@
 #define NOISE_THRESHOLD 1.f
 #define MAX_WAIT_DELAY_US MAX_MSG_SIZE*PERIOD
 
-#define ASSERT (cond) printf("assertion '%s' failed at line %d\n", #cond, __LINE__);
 
-float readADC(void) {
-  return 0.f; // TODO
-}
 inline void writeLED(const bool value, const unsigned microseconds) {
-  return;
+  digitalWrite(LED_PIN, value);
+  delayMicroseconds(microseconds);
 }
+
 inline void wait(const unsigned microseconds) {
-  return;
+  delayMicroseconds(microseconds);
 }
+
 
 int send_OOK(const char* buf, const int len) {
   for(int i=0;i<len;i++) {
@@ -29,6 +43,7 @@ int send_OOK(const char* buf, const int len) {
   return 0;
 }
 
+/** Manchester encoding */
 int send_ME(const char* buf, const int len) {
   for(int i=0;i<len;i++) {
     if(buf[i]) {
@@ -68,24 +83,31 @@ int send(const char* msg, const int msg_len,
     buf[offset++] = msg[i];
   }
 
-  /** SLOW SENSING **/
-  while(readADC() > NOISE_THRESHOLD);
-  /* // TODO: randomized backoff
+  // SLOW SENSING w/ randomized backoff
   while(readADC() > NOISE_THRESHOLD) {
     wait(((rand() % 100)/100.f)*MAX_WAIT_DELAY_US);
   }
-  */
 
   /** SEND FRAME **/
-  send_OOK(buf, offset);
+  send_ME(buf, offset);
 
   /** WAIT FOR ACK **/
   
 }
 
 int main() {
+  // init rand lib
   time_t t;
   srand((unsigned)time(&t));
 
   // init pi
+  if(wiringPiSetup()<0 ||
+     initADC()<0) {
+    printf("PI setup failed!\n");
+    return -1;
+  }
+
+  // init pins
+  pinMode(LED_PIN, OUTPUT);
+
 }

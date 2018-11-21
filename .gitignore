@@ -1,1 +1,5 @@
-ADC
+*
+!*.c
+!*.h
+!Makefile
+!.gitignore

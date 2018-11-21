@@ -1,7 +1,11 @@
-all: VLC
+all: VLC ADC pin
 
-VLC: VLC.c
-	g++ -o VLC VLC.c
+VLC: VLC.c adc_lib.c adc_lib.h
+	g++ -o VLC VLC.c adc_lib.c -lwiringPi
+ADC: ADC.c adc_lib.c adc_lib.h
+	g++ -o ADC ADC.c adc_lib.c -lwiringPi
+pin: pin.c
+	g++ -o pin pin.c -lwiringPi
 
 clean:
-	rm VLC
+	rm VLC ADC pin
