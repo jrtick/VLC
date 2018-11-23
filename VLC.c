@@ -196,8 +196,11 @@ int main() {
   srand((unsigned)time(&t));
 
   // init pi
-  if(wiringPiSetupGpio()<0 ||
-     initADC()<0) {
+  if(wiringPiSetupGpio()<0
+#ifndef SEND_ONLY
+     || initADC()<0
+#endif
+  ){
     printf("PI setup failed!\n");
     return -1;
   }
@@ -206,14 +209,15 @@ int main() {
   pinMode(LED_PIN, OUTPUT);
 
 
+  // print configuration
   ASSERT(PPM_PERIOD_US % (1<<PPM_BITS) == 0);
   ASSERT(PPM_BITS==1 || PPM_BITS==2 || PPM_BITS==4 || PPM_BITS==8);
-
   printf("Config:\n");
   printf("PPM Period: %d us\n", PPM_PERIOD_US);
   printf("PPM Period: %d bits\n", PPM_BITS);
   printf("PPM slot period: %d us\n", PPM_SLOT_US);
 
+#ifndef SEND_ONLY
   // take a few values from ADC to get mean low and stddev
   float adc_values[CONFIG_VALUE];
   float mean = 0;
@@ -240,10 +244,13 @@ int main() {
     printf("Failed to fork receiver thread.\n");
     return -1;
   }
+#endif
   
   while(1) {
     size_t size;
     char* buf = NULL;
+    printf("Type a message to send: ");
+    fflush(stdout);
     if((size=getline(&buf, &size, stdin)) != -1) {
       buf[--size] = '\0';
       printf("Attempting to send \"%s\"...\n", buf);
@@ -257,7 +264,9 @@ int main() {
     free(buf);
   }
 
+#ifndef SEND_ONLY
   pthread_join(receiver_thread, NULL);
+#endif
 
   return 0;
 }
