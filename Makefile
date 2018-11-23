@@ -1,6 +1,6 @@
 all: VLC ADC pin
 
-VLC: VLC.c adc_lib.c adc_lib.h
+VLC: VLC.c adc_lib.c adc_lib.h ids.h
 	g++ -o VLC VLC.c adc_lib.c -lwiringPi -lpthread
 ADC: ADC.c adc_lib.c adc_lib.h
 	g++ -o ADC ADC.c adc_lib.c -lwiringPi

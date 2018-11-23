@@ -8,6 +8,7 @@
 #include "adc_lib.h"
 #include <stdbool.h>
 #include <pthread.h>
+#include "ids.h"
 
 // random defines
 #define STR(x) #x
@@ -36,6 +37,7 @@ int send_OOK(const char* buf, const int len) {
     delayMicroseconds(PPM_PERIOD_US);
   }
   // TODO: FAST SENSING
+  digitalWrite(LED_PIN, 0);
   return 0;
 }
 
@@ -51,6 +53,7 @@ int send_PPM(const char* buf, const int byte_count) {
       }
     }
   }
+  digitalWrite(LED_PIN, 0);
   return 0;
 }
 // receives one period of PPM
@@ -188,6 +191,21 @@ restart_receive:
 
 #define CONFIG_VALUE 1000
 int main() {
+  // init rand lib
+  time_t t;
+  srand((unsigned)time(&t));
+
+  // init pi
+  if(wiringPiSetupGpio()<0 ||
+     initADC()<0) {
+    printf("PI setup failed!\n");
+    return -1;
+  }
+
+  // init pins
+  pinMode(LED_PIN, OUTPUT);
+
+
   ASSERT(PPM_PERIOD_US % (1<<PPM_BITS) == 0);
   ASSERT(PPM_BITS==1 || PPM_BITS==2 || PPM_BITS==4 || PPM_BITS==8);
 
@@ -214,21 +232,7 @@ int main() {
   printf("mean low value: %.3fv\n", mean);
   printf("stddev value: %.3fv\n", stddev);
   high_cutoff = mean+4*stddev;
-  printf("high cutoff is therefore %.3fv\n", stddev);
-
-  // init rand lib
-  time_t t;
-  srand((unsigned)time(&t));
-
-  // init pi
-  if(wiringPiSetupGpio()<0 ||
-     initADC()<0) {
-    printf("PI setup failed!\n");
-    return -1;
-  }
-
-  // init pins
-  pinMode(LED_PIN, OUTPUT);
+  printf("high cutoff is therefore %.3fv\n", high_cutoff);
 
   // fork receiver thread
   pthread_t receiver_thread;
@@ -241,7 +245,14 @@ int main() {
     size_t size;
     char* buf = NULL;
     if((size=getline(&buf, &size, stdin)) != -1) {
-      printf("You want to send the msg \"%s\"? Hahaha no.\n", buf);
+      buf[--size] = '\0';
+      printf("Attempting to send \"%s\"...\n", buf);
+      if(size > MAX_MSG_SIZE) {
+        printf("FAIL: msg must be <= %d chars\n", MAX_MSG_SIZE);
+      } else {
+        send(buf, size, OTHER_ID, MY_ID);
+        printf("Completed.\n");
+      }
     }
     free(buf);
   }
