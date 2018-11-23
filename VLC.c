@@ -23,8 +23,8 @@
 #define SAMPLE_PERIOD_US 25
 #define PPM_BITS 1
 #define PPM_SLOT_COUNT (1<<(PPM_BITS))
-#define PPM_PERIOD_US (SAMPLE_PERIOD_US*4*PPM_SLOT_COUNT)
-#define PPM_SLOT_US ((PPM_PERIOD_US) / (1<<PPM_BITS))
+#define PPM_SLOT_US (SAMPLE_PERIOD_US*10)
+#define PPM_PERIOD_US (PPM_SLOT_US*PPM_SLOT_COUNT)
 
 // Protocol defines
 #define PREAMBLE  0b01010101
@@ -253,6 +253,10 @@ int main() {
     fflush(stdout);
     if((size=getline(&buf, &size, stdin)) != -1) {
       buf[--size] = '\0';
+      if(strcmp(buf, "quit")==0 || strcmp(buf, "exit")==0) {
+        free(buf);
+        break;
+      }
       printf("Attempting to send \"%s\"...\n", buf);
       if(size > MAX_MSG_SIZE) {
         printf("FAIL: msg must be <= %d chars\n", MAX_MSG_SIZE);
