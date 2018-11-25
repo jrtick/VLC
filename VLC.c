@@ -46,6 +46,7 @@ int send_OOK(const char* buf, const int len) {
   return 0;
 }
 
+volatile bool SENDING = false;
 /** this is Manchester encoding if PPM_BITS==1 */
 int send_PPM(const char* buf, const int byte_count) {
   { // slow sensing
@@ -62,6 +63,7 @@ slow_sensing:
   }
 
   //printf("GOING\n");
+  SENDING = true;
   digitalWrite(LED_PIN, 1); delayMicroseconds(5*PPM_PERIOD_US);
   digitalWrite(LED_PIN, 0); delayMicroseconds(5*PPM_PERIOD_US);
   for(int i=0;i<byte_count;i++) {
@@ -76,6 +78,7 @@ slow_sensing:
     }
   }
   digitalWrite(LED_PIN, 0);
+  SENDING = false;
   return 0;
 }
 // receives one period of PPM
@@ -159,12 +162,14 @@ void* receive_loop(void* arg) { // PPM ONLY
     int DEBUG;
 restart_receive:
     //if(!finished) break;
+    while(SENDING); // wait & poll
     if(DEBUG != 63 && DEBUG != 1) printf("%d\n", DEBUG);
     DEBUG=0;
 
     // synchronization beacon
     {
       while(readADC() < high_cutoff);
+      if(SENDING) goto restart_receive;
       DEBUG |= 1;
 
       // signal must stay high for one period
@@ -185,6 +190,7 @@ restart_receive:
           else goto restart_receive;
         }
       }
+      if(SENDING) goto restart_receive;
       DEBUG |= 2;
 
       // signal must stay low for one period
@@ -205,6 +211,7 @@ restart_receive:
           else goto restart_receive;
         }
       }
+      if(SENDING) goto restart_receive;
       DEBUG |= 4;
     }
 
@@ -214,11 +221,13 @@ restart_receive:
       for(int i=0;i<8/PPM_BITS;i++) {
         received += receivePPM()<<(PPM_BITS*i);
       }
+      if(SENDING) goto restart_receive;
       DEBUG |= 8;
       if(received != PREAMBLE) {
         printf("Failed PREAMBLE (detected 0x%x)\n", received);
         goto restart_receive;
       }
+      if(SENDING) goto restart_receive;
       DEBUG |= 16;
     }
 
@@ -235,6 +244,7 @@ restart_receive:
       for(int i=0;i<16/PPM_BITS;i++) {
         msg_size += receivePPM()<<(PPM_BITS*i);
       }
+      if(SENDING) goto restart_receive;
       DEBUG |= 32;
 
       if(to_addr>=15 || from_addr>=15 || msg_size >= MAX_MSG_SIZE) {
@@ -250,6 +260,7 @@ restart_receive:
       for(int i=0;i<8/PPM_BITS;i++) curchar += receivePPM()<<(PPM_BITS*i);
       buf[i] = curchar;
     }
+    if(SENDING) goto restart_receive;
 
     // check postamble
     {
@@ -262,7 +273,8 @@ restart_receive:
         goto restart_receive;
       }
     }
-
+    delayMicroseconds(100);
+    send("ack", 3, from_addr, to_addr);
     // print msg
     buf[msg_size] = '\0';
     printf("(%d -> %d) MSG RECEIVED: \"%s\"\n", from_addr, to_addr, buf);
