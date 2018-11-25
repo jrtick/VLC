@@ -23,7 +23,7 @@
 #define SAMPLE_PERIOD_US 25
 #define PPM_BITS 1
 #define PPM_SLOT_COUNT (1<<(PPM_BITS))
-#define PPM_SLOT_US (SAMPLE_PERIOD_US*20)
+#define PPM_SLOT_US (SAMPLE_PERIOD_US*100)
 #define PPM_PERIOD_US (PPM_SLOT_US*PPM_SLOT_COUNT)
 
 // Protocol defines
@@ -159,29 +159,50 @@ void* receive_loop(void* arg) { // PPM ONLY
     int DEBUG;
 restart_receive:
     //if(!finished) break;
-    //printf("%d\n", DEBUG);
+    if(DEBUG != 63 && DEBUG != 1) printf("%d\n", DEBUG);
     DEBUG=0;
 
     // synchronization beacon
     {
       while(readADC() < high_cutoff);
       DEBUG |= 1;
-      unsigned start = micros();
 
       // signal must stay high for one period
-      while(readADC() > high_cutoff);
-      unsigned end = micros();
-      DEBUG |= 2;
-      if(end-start < 5*PERIOD_LOW || end-start > 5*PERIOD_HIGH) {
-        //printf("Failed ON beacon\n");
-        goto restart_receive;
+      unsigned start = micros();
+      while(1) {
+        const unsigned dur = micros()-start;
+        const unsigned leftover = 5*PPM_PERIOD_US-dur;
+        if(leftover < 8*SAMPLE_PERIOD_US) {
+          delayMicroseconds(leftover);
+          break;
+        }
+        float val = 0;
+        for(int i=0;i<8;i++) val+=readADC();
+        val /= 8;
+        if(val < high_cutoff) {
+          if(dur < 2*SAMPLE_PERIOD_US) continue;
+          else if(5*PPM_PERIOD_US-dur < 2*SAMPLE_PERIOD_US) break;
+          else goto restart_receive;
+        }
       }
+      DEBUG |= 2;
 
       // signal must stay low for one period
-      while(micros()-end < 5*PPM_PERIOD_US) {
-        if(readADC() > high_cutoff) {
-          //printf("Failed OFF beacon\n");
-          goto restart_receive;
+      start = micros();
+      while(1) {
+        const unsigned dur = micros()-start;
+        const unsigned leftover = 5*PPM_PERIOD_US-dur;
+        if(leftover < 8*SAMPLE_PERIOD_US) {
+          delayMicroseconds(leftover);
+          break;
+        }
+        float val = 0;
+        for(int i=0;i<8;i++) val+=readADC();
+        val /= 8;
+        if(val > high_cutoff) {
+          if(dur < 2*SAMPLE_PERIOD_US) continue;
+          else if(5*PPM_PERIOD_US-dur < 2*SAMPLE_PERIOD_US) break;
+          else goto restart_receive;
         }
       }
       DEBUG |= 4;
@@ -298,7 +319,7 @@ int main() {
 
   printf("mean low value: %.3fv\n", mean);
   printf("stddev value: %.3fv\n", stddev);
-  high_cutoff = 0.290;//mean+4*stddev;
+  high_cutoff = mean+4*stddev;
   printf("high cutoff is therefore %.3fv\n", high_cutoff);
 
   // fork receiver thread
