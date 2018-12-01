@@ -15,16 +15,29 @@ int initADC(){
   return wiringPiSPISetup(SPI_CHANNEL, SPI_CLOCK);
 }
 
-float readADC(void) {
-  unsigned char buf[2] = {(LOGIC_HIGH<<7) | (SINGLE_MODE<<6) |
-	                        (SPI_CHANNEL<<5) | (MSB_FIRST<<4), 0};
+inline float readADC_internal() {
+  unsigned char buf[2] = {( LOGIC_HIGH<<7) | (SINGLE_MODE<<6) |
+	                  (SPI_CHANNEL<<5) | (  MSB_FIRST<<4), 0};
+  // this fn "atomically" sends message and puts response into buf
   int count = wiringPiSPIDataRW(SPI_CHANNEL, buf, 2);
   if(count != 2) {
     printf("ERROR: ADC READ FAILED (%d).\n", count);
-    return -2*V_REF;
+    return -2*V_REF; // just so it's clearly wrong
   } else {
     const int value = ((buf[0]<<8) | buf[1])>>1;
+    // convert raw ACd value to voltage based on Vref
     return (V_REF*1.f*value) / (1<<ADC_RESOLUTION);
   }
 }
 
+float readADC() {
+  return readADC_internal();
+}
+
+float readADCavg(const int samples) {
+  float val = 0;
+  for(int i=0;i<samples;i++) {
+    val += readADC_internal();
+  }
+  return val/samples;
+}
