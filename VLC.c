@@ -115,7 +115,7 @@ inline char receivePPM() {
   int max_count = 0;
   // vote on which slot is high based on which has the most "high" values
   for(int cur_slot=0; cur_slot<PPM_SLOT_COUNT; cur_slot++) {
-    const unsinged start = micros();
+    const unsigned start = micros();
     const unsigned cutoff_time_us = start + PPM_SLOT_US-2*SAMPLE_PERIOD_US;
     int count = 0;
     while(micros() <= cutoff_time_us) {
@@ -255,7 +255,7 @@ restart_receive:
     buf[msg_size] = '\0';
     printf("(%d -> %d) MSG RECEIVED (%d): \"%s\"\n",
            from_addr, to_addr, msg_size, buf);
-  }
+    goto restart_receive;
 
   return arg;
 }
@@ -342,7 +342,7 @@ int main() {
   }
 
 #ifndef SEND_ONLY
-  finished = true;
+  end_of_program = true;
   pthread_join(receiver_thread, NULL);
 #endif
 
