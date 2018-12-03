@@ -205,7 +205,7 @@ restart_receive:
         float val = 0;
         for(int i=0;i<4;i++) val+=readADC();
         if(val/4 < high_cutoff) {
-          if(dur>100) printf("failed beacon, only %dus\n", dur);
+          //if(dur>100) printf("failed beacon, only %dus\n", dur);
           goto restart_receive;
         }
       }
@@ -218,7 +218,7 @@ restart_receive:
         float val = 0;
         for(int i=0;i<4;i++) val+=readADC();
         if(val/4 > high_cutoff) {
-          printf("Failed off beacon, only %dus\n", dur);
+          //printf("Failed off beacon, only %dus\n", dur);
           goto restart_receive;
         }
       }
@@ -272,7 +272,7 @@ restart_receive:
 
     /** acknowledge successful receipt **/
     delayMicroseconds(5*SAMPLE_PERIOD_US);
-    send("ack", 3, from_addr, to_addr);
+    if(strcmp(buf,"ack")!=0) send("ack", 3, from_addr, to_addr);
 
     // print received msg
     printf("(%d -> %d) MSG RECEIVED (%d): \"%s\"\n",
