@@ -92,6 +92,16 @@ void set_led(const bool value, const unsigned duration) {
 
 /** this is Manchester encoding if PPM_BITS==1 */
 int send_PPM(const char* buf, const int byte_count) {
+  // Preprocess step: pre-record signal
+  bool signal[PPM_SLOT_COUNT*(8/PPM_BITS)*(MAX_MSG_SIZE+4)] = {0};
+  for(int i=0;i<byte_count;i++) {
+    const char cur_char = buf[i];
+    for(int j=0;j<8/PPM_BITS;j++) {
+      const char cur_val = (cur_char>>(j*PPM_BITS)) & ((1<<PPM_BITS)-1);
+      signal[PPM_SLOT_COUNT*(8/PPM_BITS)*i+j*PPM_SLOT_COUNT+cur_val] = 1;
+    }
+  }
+
   { // slow sensing -- check if someone else is currently sending
     unsigned start;
     int contended = -1;
@@ -118,6 +128,25 @@ slow_sensing:
   SENDING = true;
 
   // send beacon
+  digitalWrite(LED_PIN, 1);
+  delayMicroseconds(BEACON_PERIOD_US/2);
+  digitalWrite(LED_PIN, 0);
+  delayMicroseconds(BEACON_PERIOD_US/2);
+
+  const unsigned packet_start = micros();
+  const unsigned packet_duration = (byte_count)*(8/PPM_BITS)*PPM_PERIOD_US;
+  unsigned duration;
+  bool led_value = 0;
+  while((duration=micros()-packet_start) < packet_duration) {
+    const unsigned next_led_val = signal[duration/PPM_SLOT_US];
+    if(led_value != next_led_val) {
+      digitalWrite(LED_PIN, next_led_val);
+      led_value = next_led_val;
+    }
+  }
+  digitalWrite(LED_PIN, 0);
+
+  /*// send beacon
   reset_led_tracking();
   set_led(true , BEACON_PERIOD_US/2);
   set_led(false, BEACON_PERIOD_US/2);
@@ -136,7 +165,8 @@ slow_sensing:
       }
     }
   }
-  set_led(false, 0);
+  set_led(false, 0);*/
+
   SENDING = false;
   return 0;
 }
@@ -200,7 +230,9 @@ int send(const char* msg, const int msg_len,
   return 0;
 }
 
-void* receive_loop(void* const arg) {
+//void* receive_loop(void* const arg) {
+PI_THREAD (receiver_thread) {
+  void* arg = NULL;
   char buf[MAX_MSG_SIZE+1];
 
   while(!end_of_program) {
@@ -364,11 +396,15 @@ int main() {
   printf("high cutoff is therefore %.3fv\n", high_cutoff);
 
   // fork receiver thread
-  pthread_t receiver_thread;
-  if(pthread_create(&receiver_thread, NULL, receive_loop, NULL)<0) {
+  if(piThreadCreate(receiver_thread) != 0) {
     printf("Failed to fork receiver thread.\n");
     return -1;
   }
+  /*pthread_t receiver_thread;
+  if(pthread_create(&receiver_thread, NULL, receive_loop, NULL)<0) {
+    printf("Failed to fork receiver thread.\n");
+    return -1;
+  }*/
 #endif
   
   while(1) {
@@ -395,7 +431,7 @@ int main() {
 
 #ifndef SEND_ONLY
   end_of_program = true;
-  pthread_join(receiver_thread, NULL);
+  //pthread_join(receiver_thread, NULL);
 #endif
 
   return 0;
