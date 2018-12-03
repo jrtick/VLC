@@ -26,7 +26,7 @@
 #define SAMPLE_PERIOD_US 25 // 40kHz
 #define PPM_BITS 1 //  manchester encoding
 #define PPM_SLOT_COUNT (1<<(PPM_BITS))
-#define PPM_SLOT_US (SAMPLE_PERIOD_US*100) // should probs never go below 10
+#define PPM_SLOT_US (SAMPLE_PERIOD_US*20) // should probs never go below 10
 #define PPM_PERIOD_US (PPM_SLOT_US*PPM_SLOT_COUNT)
 
 // Protocol defines
@@ -70,7 +70,9 @@ slow_sensing:
     }
     start = micros();
     while(micros()-start < SLOW_SENSING_PERIOD_US) {
-      if(readADC() > high_cutoff) {
+      float val = 0;
+      for(int i=0;i<4;i++) val += readADC();
+      if(val/4 > high_cutoff) {
         if(contended==0) {
           printf("CONTENDED...");
           fflush(stdout);
@@ -370,7 +372,7 @@ int main() {
 
 #ifndef SEND_ONLY
   end_of_program = true;
-  //pthread_join(receiver_thread, NULL);
+  pthread_join(receiver_thread, NULL);
 #endif
 
   return 0;
