@@ -1,5 +1,5 @@
 *
-!.h
-!.c
-!.py
+!*.h
+!*.c
+!*.py
 !.gitignore
