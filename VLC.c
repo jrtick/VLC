@@ -46,50 +46,6 @@ static float high_cutoff;
 static volatile bool SENDING = false;
 static volatile bool end_of_program = false;
 
-inline int min(const int x, const int y) {
-  return x<y? x : y;
-}
-
-static unsigned recorded_time;
-static unsigned period_start;
-void reset_led_tracking(void) {
-  period_start = micros();
-  recorded_time = 0;
-}
-
-void set_led(const bool value, const unsigned duration) {
-  const unsigned new_contract_start = micros();
-  static bool led = false;
-  static unsigned contract_start=(unsigned)-1;
-  static int remaining_time=0;
-  if(value != led) {
-    // finish contract
-    recorded_time += remaining_time;
-    //if(contract_start != (unsigned)-1) remaining_time -= (micros()-contract_start);
-    /*if(remaining_time > 0) {
-      // do a real v hypothetical correction
-      const int difference = (micros()-period_start) - recorded_time;
-      if(difference>2) {
-        const int change = min(min(difference-1, remaining_time), 25);
-        recorded_time += change;
-        remaining_time -= change;
-      } //else if(difference < 0) delayMicroseconds(min(-difference, 25));
-    }*/
-
-    if(remaining_time>0) {
-      const int offset = led? PD_FALL_US : PD_RISE_US;
-      if(remaining_time > offset) {
-        delayMicroseconds(remaining_time-offset);
-        remaining_time = offset;
-      }
-    } else remaining_time = 0;
-    digitalWrite(LED_PIN, value);
-    contract_start = new_contract_start;
-    led = value;
-  }
-  remaining_time += duration;
-}
-
 /** this is Manchester encoding if PPM_BITS==1 */
 int send_PPM(const char* buf, const int byte_count) {
   // Preprocess step: pre-record signal
@@ -102,21 +58,24 @@ int send_PPM(const char* buf, const int byte_count) {
     }
   }
 
+#ifndef SEND_ONLY
   { // slow sensing -- check if someone else is currently sending
     unsigned start;
     int contended = -1;
 slow_sensing:
     contended++;
-    if(contended==1) {
-      printf("CONTENDED...");
-      fflush(stdout);
-    } else if(contended>1) {
+    if(contended>1) {
       printf(".");
       fflush(stdout);
     }
     start = micros();
     while(micros()-start < SLOW_SENSING_PERIOD_US) {
       if(readADC() > high_cutoff) {
+        if(contended==0) {
+          printf("CONTENDED...");
+          fflush(stdout);
+        }
+
         // random backoff if collision detected
         delayMicroseconds(RANDOM_BACKOFF_LOW_US+(rand() % RANDOM_BACKOFF_RANGE_US));
         goto slow_sensing;
@@ -124,6 +83,7 @@ slow_sensing:
     }
     if(contended>0) printf("GOING\n");
   }
+#endif
 
   SENDING = true;
 
@@ -145,27 +105,6 @@ slow_sensing:
     }
   }
   digitalWrite(LED_PIN, 0);
-
-  /*// send beacon
-  reset_led_tracking();
-  set_led(true , BEACON_PERIOD_US/2);
-  set_led(false, BEACON_PERIOD_US/2);
-
-  // for each byte
-  for(int i=0;i<byte_count;i++) {
-    const char cur_char = buf[i];
-    // for each ppm symbol in current byte
-    for(int j=0;j<8;j+=PPM_BITS) {
-      const char cur_val = (cur_char>>j) & ((1<<PPM_BITS)-1);
-
-      if(cur_val != 0) set_led(false, PPM_SLOT_US*cur_val);
-      set_led(true, PPM_SLOT_US);
-      if(cur_val != PPM_SLOT_COUNT-1) {
-        set_led(false, ((PPM_SLOT_COUNT-1)-cur_val)*PPM_SLOT_US);
-      }
-    }
-  }
-  set_led(false, 0);*/
 
   SENDING = false;
   return 0;
@@ -230,9 +169,9 @@ int send(const char* msg, const int msg_len,
   return 0;
 }
 
-//void* receive_loop(void* const arg) {
-PI_THREAD (receiver_thread) {
-  void* arg = NULL;
+void* receive_loop(void* const arg) {
+//PI_THREAD (receiver_thread) {
+  //void* arg = NULL;
   char buf[MAX_MSG_SIZE+1];
 
   while(!end_of_program) {
@@ -396,15 +335,15 @@ int main() {
   printf("high cutoff is therefore %.3fv\n", high_cutoff);
 
   // fork receiver thread
-  if(piThreadCreate(receiver_thread) != 0) {
-    printf("Failed to fork receiver thread.\n");
-    return -1;
-  }
-  /*pthread_t receiver_thread;
-  if(pthread_create(&receiver_thread, NULL, receive_loop, NULL)<0) {
+  /*if(piThreadCreate(receiver_thread) != 0) {
     printf("Failed to fork receiver thread.\n");
     return -1;
   }*/
+  pthread_t receiver_thread;
+  if(pthread_create(&receiver_thread, NULL, receive_loop, NULL)<0) {
+    printf("Failed to fork receiver thread.\n");
+    return -1;
+  }
 #endif
   
   while(1) {
