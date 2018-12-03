@@ -21,10 +21,12 @@
 
 // hardware defines
 #define LED_PIN 25 // GPIO
+#define PD_RISE_US 80
+#define PD_FALL_US 80
 #define SAMPLE_PERIOD_US 25 // 40kHz
 #define PPM_BITS 1 //  manchester encoding
 #define PPM_SLOT_COUNT (1<<(PPM_BITS))
-#define PPM_SLOT_US (SAMPLE_PERIOD_US*20) // should probs never go below 10
+#define PPM_SLOT_US (SAMPLE_PERIOD_US*100) // should probs never go below 10
 #define PPM_PERIOD_US (PPM_SLOT_US*PPM_SLOT_COUNT)
 
 // Protocol defines
@@ -34,7 +36,7 @@
 #define MAX_MSG_SIZE 60 // bytes
 #define PACKET_PERIOD_US ((8/PPM_BITS)*PPM_PERIOD_US*(MAX_MSG_SIZE+4))
 
-#define BEACON_PERIOD_US (10*PPM_PERIOD_US)
+#define BEACON_PERIOD_US (4*PPM_PERIOD_US)
 #define SLOW_SENSING_PERIOD_US BEACON_PERIOD_US
 #define RANDOM_BACKOFF_LOW_US PACKET_PERIOD_US
 #define RANDOM_BACKOFF_RANGE_US (4*PACKET_PERIOD_US)
@@ -43,6 +45,50 @@
 static float high_cutoff;
 static volatile bool SENDING = false;
 static volatile bool end_of_program = false;
+
+inline int min(const int x, const int y) {
+  return x<y? x : y;
+}
+
+static unsigned recorded_time;
+static unsigned period_start;
+void reset_led_tracking(void) {
+  period_start = micros();
+  recorded_time = 0;
+}
+
+void set_led(const bool value, const unsigned duration) {
+  const unsigned new_contract_start = micros();
+  static bool led = false;
+  static unsigned contract_start=(unsigned)-1;
+  static int remaining_time=0;
+  if(value != led) {
+    // finish contract
+    recorded_time += remaining_time;
+    //if(contract_start != (unsigned)-1) remaining_time -= (micros()-contract_start);
+    /*if(remaining_time > 0) {
+      // do a real v hypothetical correction
+      const int difference = (micros()-period_start) - recorded_time;
+      if(difference>2) {
+        const int change = min(min(difference-1, remaining_time), 25);
+        recorded_time += change;
+        remaining_time -= change;
+      } //else if(difference < 0) delayMicroseconds(min(-difference, 25));
+    }*/
+
+    if(remaining_time>0) {
+      const int offset = led? PD_FALL_US : PD_RISE_US;
+      if(remaining_time > offset) {
+        delayMicroseconds(remaining_time-offset);
+        remaining_time = offset;
+      }
+    } else remaining_time = 0;
+    digitalWrite(LED_PIN, value);
+    contract_start = new_contract_start;
+    led = value;
+  }
+  remaining_time += duration;
+}
 
 /** this is Manchester encoding if PPM_BITS==1 */
 int send_PPM(const char* buf, const int byte_count) {
@@ -72,43 +118,25 @@ slow_sensing:
   SENDING = true;
 
   // send beacon
-  digitalWrite(LED_PIN, 1);
-  delayMicroseconds(BEACON_PERIOD_US/2);
-  digitalWrite(LED_PIN, 0);
-  delayMicroseconds(BEACON_PERIOD_US/2);
+  reset_led_tracking();
+  set_led(true , BEACON_PERIOD_US/2);
+  set_led(false, BEACON_PERIOD_US/2);
 
   // for each byte
   for(int i=0;i<byte_count;i++) {
     const char cur_char = buf[i];
     // for each ppm symbol in current byte
-    for(int j=0;j<8;j+=PPM_BITS) {  // TODO: see if we're running fast or running slow?
+    for(int j=0;j<8;j+=PPM_BITS) {
       const char cur_val = (cur_char>>j) & ((1<<PPM_BITS)-1);
 
-      // off 'til the specified symbol slot
-      if(cur_val != 0) {
-        const unsigned start = micros();
-        digitalWrite(LED_PIN, 0);
-        delayMicroseconds(cur_val*PPM_SLOT_US-(micros()-start));
-      }
-
-      // LED only on for specified symbol slot
-      {
-        const unsigned start = micros();
-        digitalWrite(LED_PIN, 1);
-        delayMicroseconds(PPM_SLOT_US-(micros()-start));
-      }
-
-      // off for rest of PPM period
+      if(cur_val != 0) set_led(false, PPM_SLOT_US*cur_val);
+      set_led(true, PPM_SLOT_US);
       if(cur_val != PPM_SLOT_COUNT-1) {
-        const unsigned start = micros();
-        digitalWrite(LED_PIN, 0);
-        delayMicroseconds(((PPM_SLOT_COUNT-1)-cur_val)*PPM_SLOT_US-(micros()-start));
+        set_led(false, ((PPM_SLOT_COUNT-1)-cur_val)*PPM_SLOT_US);
       }
     }
   }
-
-  // done sending
-  digitalWrite(LED_PIN, 0);
+  set_led(false, 0);
   SENDING = false;
   return 0;
 }
@@ -203,11 +231,10 @@ restart_receive:
         float val = 0;
         for(int i=0;i<4;i++) val+=readADC();
         if(val/4 < high_cutoff) {
-          printf("failed beacon, only %dus\n", dur);
+          if(dur>100) printf("failed beacon, only %dus\n", dur);
           goto restart_receive;
         }
       }
-      DEBUG++;
       delayMicroseconds(BEACON_PERIOD_US/2-dur);
 
       // signal must stay low for half of beacon
@@ -221,7 +248,6 @@ restart_receive:
           goto restart_receive;
         }
       }
-      DEBUG++;
       delayMicroseconds(BEACON_PERIOD_US/2-dur);
     }
 
@@ -233,7 +259,6 @@ restart_receive:
         printf("Failed PREAMBLE (detected 0x%x)\n", received);
         goto restart_receive;
       }
-      DEBUG++;
     }
 
     /** get packet info **/
@@ -252,7 +277,6 @@ restart_receive:
                to_addr, from_addr, msg_size);
         goto restart_receive;
       }
-      DEBUG++;
     }
 
     /** now, get actual message **/
@@ -311,6 +335,7 @@ int main() {
   // print configuration
   ASSERT(PPM_PERIOD_US % (1<<PPM_BITS) == 0);
   ASSERT(PPM_BITS==1 || PPM_BITS==2 || PPM_BITS==4 || PPM_BITS==8);
+  ASSERT(PPM_SLOT_US > 2*(PD_FALL_US+PD_RISE_US));
   printf("Config:\n");
   printf("Beacon Period: %d us\n", BEACON_PERIOD_US);
   printf("PPM Period: %d us\n", PPM_PERIOD_US);

@@ -1,5 +1,6 @@
 *
 !*.h
+ids.h
 !*.c
 !*.py
 !.gitignore
