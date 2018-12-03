@@ -1,6 +1,5 @@
 *
-!*.c
-!*.h
-ids.h
-!Makefile
+!.h
+!.c
+!.py
 !.gitignore

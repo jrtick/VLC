@@ -52,7 +52,7 @@ int send_PPM(const char* buf, const int byte_count) {
 slow_sensing:
     contended++;
     if(contended==1) {
-      printf("CONTENDED");
+      printf("CONTENDED...");
       fflush(stdout);
     } else if(contended>1) {
       printf(".");
@@ -102,7 +102,7 @@ slow_sensing:
       if(cur_val != PPM_SLOT_COUNT-1) {
         const unsigned start = micros();
         digitalWrite(LED_PIN, 0);
-        delayMicroseconds((PPM_SLOT_COUNT-cur_val-1)*PPM_SLOT_US-(micros()-start));
+        delayMicroseconds(((PPM_SLOT_COUNT-1)-cur_val)*PPM_SLOT_US-(micros()-start));
       }
     }
   }
@@ -113,9 +113,10 @@ slow_sensing:
   return 0;
 }
 
-int count_buf_index = 0;
-int count_buf[1000];
 
+
+static volatile int count_buf_index = 0;
+static int count_buf[1000];
 // receives one period of PPM
 inline char receivePPM() {
   int on_slot = 0;
@@ -124,8 +125,7 @@ inline char receivePPM() {
   for(int cur_slot=0; cur_slot<PPM_SLOT_COUNT; cur_slot++) {
     const unsigned start = micros();
     int count = 0;
-    unsigned dur;
-    while(dur=(micros()-start) <= PPM_SLOT_US-5*SAMPLE_PERIOD_US) {
+    while((micros()-start) <= PPM_SLOT_US-5*SAMPLE_PERIOD_US) {
       const float val = readADC();
       if(val < 0) printf("ERR\n");
       if(val >= high_cutoff) count++;
@@ -137,7 +137,7 @@ inline char receivePPM() {
     count_buf[count_buf_index++] = count;
 
     // account for skew by finishing a little early and waiting for next slot
-    delayMicroseconds(PPM_SLOT_US-dur);
+    delayMicroseconds(PPM_SLOT_US-(micros()-start));
   }
 
   return on_slot;
@@ -168,65 +168,64 @@ int send(const char* msg, const int msg_len,
   printf("\n");
   send_PPM(buf, count);
 
-  /** WAIT FOR ACK **/
-  // TODO
-  return 0; // TODO: fast sensing with backoff?
+  // TODO : look for ACK
+  return 0;
 }
 
 void* receive_loop(void* const arg) {
   char buf[MAX_MSG_SIZE+1];
 
-  printf("Receiver is ready.\n");
-  int DEBUG = 0;
+  while(!end_of_program) {
 restart_receive:
-    while(SENDING); // don't read your own message!
-    if(end_of_program) return arg; 
-
-    //if(DEBUG != 0) printf("%d\n", DEBUG);
-    DEBUG = 0;
     if(count_buf_index) {
       for(int i=0;i<count_buf_index;i+=2) {
         printf("%d vs %d\n", count_buf[i], count_buf[i+1]);
       }
       count_buf_index = 0;
     }
- 
-    // synchronization beacon
-    {
-     // wait for signal to go high
-      while(readADC() < high_cutoff);
-      DEBUG++;
-      if(SENDING) goto restart_receive;
 
+    /** wait for a signal **/
+    while(readADC() < high_cutoff) {
+      if(end_of_program) return arg;
+    }
+    // if it's our signal, do nothing.
+    if(SENDING) {
+      while(SENDING);
+      continue;
+    }
+ 
+
+    /** synchronization beacon **/
+    {
       // signal must stay high for half of beacon
       unsigned dur, start = micros();
       while((dur = micros()-start) < BEACON_PERIOD_US/2-5*SAMPLE_PERIOD_US) {
         float val = 0;
         for(int i=0;i<4;i++) val+=readADC();
         if(val/4 < high_cutoff) {
-          printf("%d\n", dur);
+          printf("failed beacon, only %dus\n", dur);
           goto restart_receive;
         }
       }
-      if(dur < BEACON_PERIOD_US/2) delayMicroseconds(BEACON_PERIOD_US/2-dur);
       DEBUG++;
+      delayMicroseconds(BEACON_PERIOD_US/2-dur);
 
       // signal must stay low for half of beacon
       start = micros();
       delayMicroseconds(2*SAMPLE_PERIOD_US); //ignore first few samples
-      while((dur=micros()-start) < BEACON_PERIOD_US/2-5*SAMPLE_PERIOD_US) {
+      while((dur = micros()-start) < BEACON_PERIOD_US/2-5*SAMPLE_PERIOD_US) {
         float val = 0;
         for(int i=0;i<4;i++) val+=readADC();
         if(val/4 > high_cutoff) {
-          printf("Failed BEACON\n");
+          printf("Failed off beacon, only %dus\n", dur);
           goto restart_receive;
         }
       }
-      if(dur < BEACON_PERIOD_US/2) delayMicroseconds(BEACON_PERIOD_US/2-dur);
       DEBUG++;
+      delayMicroseconds(BEACON_PERIOD_US/2-dur);
     }
 
-    // check preamble
+    /** check preamble **/
     {
       unsigned char received = 0;
       for(int i=0; i<8; i+=PPM_BITS) received |= receivePPM()<<i;
@@ -237,7 +236,7 @@ restart_receive:
       DEBUG++;
     }
 
-    // get info
+    /** get packet info **/
     char to_addr, from_addr;
     unsigned msg_size = 0;
     {
@@ -256,7 +255,7 @@ restart_receive:
       DEBUG++;
     }
 
-    // now, get msg
+    /** now, get actual message **/
     for(int i=0;i<msg_size;i++) {
       char* curchar = &buf[i];
       *curchar = 0;
@@ -264,7 +263,7 @@ restart_receive:
     }
     buf[msg_size] = '\0';
 
-    // check postamble
+    /** check postamble **/
     {
       unsigned char received = 0;
       for(int i=0;i<8;i+=PPM_BITS) received |= receivePPM()<<i;
@@ -272,24 +271,23 @@ restart_receive:
         printf("failed POSTAMBLE (detected 0x%x)\n", received);
         printf("to=%d,from=%d,msglen=%d\n", to_addr, from_addr, msg_size);
         printf("message would've been: ");
-        for(int i=0;i<msg_size;i++) printf("0x%x", buf[i]);
+        for(int i=0;i<msg_size;i++) printf("0x%x ", buf[i]);
         printf("\n", buf);
         goto restart_receive;
       }
     }
 
-    // acknowledge successful receipt
-    delayMicroseconds(100);
+    /** acknowledge successful receipt **/
+    delayMicroseconds(5*SAMPLE_PERIOD_US);
     send("ack", 3, from_addr, to_addr);
 
     // print received msg
     printf("(%d -> %d) MSG RECEIVED (%d): \"%s\"\n",
            from_addr, to_addr, msg_size, buf);
-    goto restart_receive;
+  }
 
   return arg;
 }
-
 
 int main() {
   // init rand lib
@@ -316,8 +314,7 @@ int main() {
   printf("Config:\n");
   printf("Beacon Period: %d us\n", BEACON_PERIOD_US);
   printf("PPM Period: %d us\n", PPM_PERIOD_US);
-  printf("PPM Period: %d bits\n", PPM_BITS);
-  printf("PPM slot period: %d us\n", PPM_SLOT_US);
+  printf("PPM %d bits\n", PPM_BITS);
   printf("Packet max period: %d us\n", PACKET_PERIOD_US);
 
 #ifndef SEND_ONLY
@@ -326,7 +323,7 @@ int main() {
   float stddev = 0;
   int count = 0;
   const unsigned start = micros();
-  while(micros()-start<2*1e6) {
+  while(micros()-start<2*1e6) { // take low readings for ~2s
     count++;
     const float val = readADC();
     mean += val;
@@ -338,7 +335,7 @@ int main() {
 
   printf("mean low value: %.3fv\n", mean);
   printf("stddev value: %.3fv\n", stddev);
-  high_cutoff = 0.15;//mean+4*stddev;
+  high_cutoff = mean+4*stddev;
   printf("high cutoff is therefore %.3fv\n", high_cutoff);
 
   // fork receiver thread
