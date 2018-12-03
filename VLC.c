@@ -118,28 +118,29 @@ static volatile int count_buf_index = 0;
 static int count_buf[1000];
 // receives one period of PPM
 inline char receivePPM() {
-  int on_slot = 0;
-  int max_count = 0;
-  // vote on which slot is high based on which has the most "high" values
-  for(int cur_slot=0; cur_slot<PPM_SLOT_COUNT; cur_slot++) {
-    const unsigned start = micros();
-    int count = 0;
-    while((micros()-start) <= PPM_SLOT_US-5*SAMPLE_PERIOD_US) {
-      const float val = readADC();
-      if(val < 0) printf("ERR\n");
-      if(val >= high_cutoff) count++;
+  int buf[(8/PPM_BITS)*PPM_SLOT_COUNT]={0};
+  const unsigned start = micros();
+  unsigned duration;
+  while((duration=micros()-start) < (8/PPM_BITS)*PPM_PERIOD_US-4*SAMPLE_PERIOD_US) {
+    if(readADC() > high_cutoff) {
+      buf[duration/PPM_SLOT_US]++;
     }
-    if(count>max_count) {
-      max_count = count;
-      on_slot = cur_slot;
-    }
-    count_buf[count_buf_index++] = count;
-
-    // account for skew by finishing a little early and waiting for next slot
-    delayMicroseconds(PPM_SLOT_US-(micros()-start));
   }
 
-  return on_slot;
+  char received = 0;
+  for(int i=0;i<8/PPM_BITS;i++) {
+    int on_slot = 0;
+    int max_count = 0;
+    for(int j=0;j<PPM_SLOT_COUNT;j++) {
+      if(buf[i*PPM_SLOT_COUNT+j] > max_count) {
+        max_count = buf[i*PPM_SLOT_COUNT+j];
+        on_slot = j;
+      }
+    }
+    received |= on_slot << (i*PPM_BITS);
+  }
+  delayMicroseconds((8/PPM_BITS)*PPM_PERIOD_US - (micros()-start));
+  return received;
 }
 
 int send(const char* msg, const int msg_len,
@@ -226,8 +227,7 @@ restart_receive:
 
     /** check preamble **/
     {
-      unsigned char received = 0;
-      for(int i=0; i<8; i+=PPM_BITS) received |= receivePPM()<<i;
+      const char received = receivePPM();
       if(received != PREAMBLE) {
         printf("Failed PREAMBLE (detected 0x%x)\n", received);
         goto restart_receive;
@@ -238,12 +238,11 @@ restart_receive:
     char to_addr, from_addr;
     unsigned msg_size = 0;
     {
-      unsigned addrs = 0;
-      for(int i=0;i<8;i+=PPM_BITS) addrs |= receivePPM()<<i;
+      const unsigned addrs = receivePPM();
       to_addr = (addrs & 0xF0) >> 4;
       from_addr = addrs & 0x0F;
       // TODO: ignore if not our address??
-      for(int i=0;i<8;i+=PPM_BITS) msg_size |= receivePPM()<<i;
+      msg_size = receivePPM();
 
       if(msg_size >= MAX_MSG_SIZE) {
         printf("invalid params (to=%d, from=%d, msg_size=%d\n",
@@ -254,16 +253,13 @@ restart_receive:
 
     /** now, get actual message **/
     for(int i=0;i<msg_size;i++) {
-      char* curchar = &buf[i];
-      *curchar = 0;
-      for(int i=0;i<8;i+=PPM_BITS) *curchar |= receivePPM()<<i;
+      buf[i] = receivePPM();
     }
     buf[msg_size] = '\0';
 
     /** check postamble **/
     {
-      unsigned char received = 0;
-      for(int i=0;i<8;i+=PPM_BITS) received |= receivePPM()<<i;
+      const char received = receivePPM();
       if(received != POSTAMBLE) {
         printf("failed POSTAMBLE (detected 0x%x)\n", received);
         printf("to=%d,from=%d,msglen=%d\n", to_addr, from_addr, msg_size);
