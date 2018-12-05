@@ -21,8 +21,6 @@
 
 // hardware defines
 #define LED_PIN 25 // GPIO
-#define PD_RISE_US 80
-#define PD_FALL_US 80
 #define SAMPLE_PERIOD_US 25 // 40kHz
 #define PPM_BITS 1 //  manchester encoding
 #define PPM_SLOT_COUNT (1<<(PPM_BITS))
@@ -33,8 +31,9 @@
 // preamble and postamble send least significant bit first
 #define PREAMBLE  0b01010101
 #define POSTAMBLE 0b00100100
-#define MAX_MSG_SIZE 60 // bytes
+#define MAX_MSG_SIZE 124 // bytes
 #define PACKET_PERIOD_US ((8/PPM_BITS)*PPM_PERIOD_US*(MAX_MSG_SIZE+4))
+#define BROADCAST_ADDR 0xF // this is broadcast address, all others must be below
 
 #define BEACON_PERIOD_US (4*PPM_PERIOD_US)
 #define SLOW_SENSING_PERIOD_US BEACON_PERIOD_US
@@ -45,6 +44,7 @@
 static float high_cutoff;
 static volatile bool SENDING = false;
 static volatile bool end_of_program = false;
+static volatile int ack_received;
 
 /** this is Manchester encoding if PPM_BITS==1 */
 int send_PPM(const char* buf, const int byte_count) {
@@ -144,8 +144,8 @@ inline char receivePPM() {
 }
 
 int send(const char* msg, const int msg_len,
-         const char to_addr, const char from_addr) {
-  ASSERT(msg_len < MAX_MSG_SIZE); // TODO: split longer messages up into several packets
+         const char to_addr, const char from_addr, const bool ack_requested) {
+  ASSERT(msg_len < MAX_MSG_SIZE);
   ASSERT(to_addr < 16);
   ASSERT(from_addr < 16);
 
@@ -155,7 +155,7 @@ int send(const char* msg, const int msg_len,
 
   buf[count++] = PREAMBLE;
   buf[count++] = ((to_addr & 0xF)<<4) | (from_addr & 0xF);
-  buf[count++] = (char) msg_len;
+  buf[count++] = (ack_requested << 7) | msg_len;
   memcpy(&buf[count], msg, msg_len);
   count += msg_len;
   buf[count++] = POSTAMBLE;
@@ -166,15 +166,23 @@ int send(const char* msg, const int msg_len,
     printf(".");
   }
   printf("\n");
+
+  ack_received = 0;
   send_PPM(buf, count);
 
-  // TODO : look for ACK
-  return 0;
+  // look for ACK with timeout
+  if(ack_requested) {
+    const unsigned start = micros();
+    if(to_addr == BROADCAST_ADDR) {
+      while((micros()-start)<20*PACKET_PERIOD_US);
+    } else {
+      while((micros()-start)<PACKET_PERIOD_US && ack_received == 0);
+    }
+    return ack_received;
+  } else return 0;
 }
 
 void* receive_loop(void* const arg) {
-//PI_THREAD (receiver_thread) {
-  //void* arg = NULL;
   char buf[MAX_MSG_SIZE+1];
 
   while(!end_of_program) {
@@ -196,7 +204,6 @@ restart_receive:
       continue;
     }
  
-
     /** synchronization beacon **/
     {
       // signal must stay high for half of beacon
@@ -225,10 +232,13 @@ restart_receive:
       delayMicroseconds(BEACON_PERIOD_US/2-dur);
     }
 
+    digitalWrite(LED_PIN, 1); // signal others that can't receive right now
+
     /** check preamble **/
     {
       const char received = receivePPM();
       if(received != PREAMBLE) {
+        digitalWrite(LED_PIN, 0);
         printf("Failed PREAMBLE (detected 0x%x)\n", received);
         goto restart_receive;
       }
@@ -237,14 +247,17 @@ restart_receive:
     /** get packet info **/
     char to_addr, from_addr;
     unsigned msg_size = 0;
+    bool ack_requested;
     {
       const unsigned addrs = receivePPM();
       to_addr = (addrs & 0xF0) >> 4;
       from_addr = addrs & 0x0F;
-      // TODO: ignore if not our address??
       msg_size = receivePPM();
+      ack_requested = (msg_size>>7) & 1;
+      msg_size = msg_size & ~(1<<7);
 
       if(msg_size >= MAX_MSG_SIZE) {
+        digitalWrite(LED_PIN, 0);
         printf("invalid params (to=%d, from=%d, msg_size=%d\n",
                to_addr, from_addr, msg_size);
         goto restart_receive;
@@ -260,6 +273,7 @@ restart_receive:
     /** check postamble **/
     {
       const char received = receivePPM();
+      digitalWrite(LED_PIN, 0);
       if(received != POSTAMBLE) {
         printf("failed POSTAMBLE (detected 0x%x)\n", received);
         printf("to=%d,from=%d,msglen=%d\n", to_addr, from_addr, msg_size);
@@ -270,13 +284,21 @@ restart_receive:
       }
     }
 
-    /** acknowledge successful receipt **/
-    delayMicroseconds(5*SAMPLE_PERIOD_US);
-    if(strcmp(buf,"ack")!=0) send("ack", 3, from_addr, to_addr);
+    /** acknowledge successful receipt if intended recipient **/
+    if(from_addr != MY_ID && (to_addr==MY_ID || to_addr==BROADCAST_ADDR)) {
+      if(strcmp("ack", buf) == 0) {
+        ack_received |= (1<<from_addr);
+      } else {
+        if(ack_requested) {
+          delayMicroseconds(5*SAMPLE_PERIOD_US);
+          send("ack", 3, from_addr, MY_ID, false);
+        }
 
-    // print received msg
-    printf("(%d -> %d) MSG RECEIVED (%d): \"%s\"\n",
-           from_addr, to_addr, msg_size, buf);
+        // print received msg
+        printf("(%d -> %d) MSG RECEIVED (%d): \"%s\"\n",
+                 from_addr, to_addr, msg_size, buf);
+      }
+    }
   }
 
   return arg;
@@ -304,7 +326,6 @@ int main() {
   // print configuration
   ASSERT(PPM_PERIOD_US % (1<<PPM_BITS) == 0);
   ASSERT(PPM_BITS==1 || PPM_BITS==2 || PPM_BITS==4 || PPM_BITS==8);
-  ASSERT(PPM_SLOT_US > 2*(PD_FALL_US+PD_RISE_US));
   printf("Config:\n");
   printf("Beacon Period: %d us\n", BEACON_PERIOD_US);
   printf("PPM Period: %d us\n", PPM_PERIOD_US);
@@ -333,34 +354,46 @@ int main() {
   printf("high cutoff is therefore %.3fv\n", high_cutoff);
 
   // fork receiver thread
-  /*if(piThreadCreate(receiver_thread) != 0) {
-    printf("Failed to fork receiver thread.\n");
-    return -1;
-  }*/
   pthread_t receiver_thread;
   if(pthread_create(&receiver_thread, NULL, receive_loop, NULL)<0) {
     printf("Failed to fork receiver thread.\n");
     return -1;
   }
 #endif
-  
+ 
   while(1) {
     size_t size = 0;
     char* buf = NULL;
-    printf("Type a message to send: ");
-    fflush(stdout);
+
+    printf("Type an address to send to: ");fflush(stdout);
+    if((size=getline(&buf, &size, stdin)) == -1) {
+      free(buf);
+      continue;
+    }
+    buf[--size] = '\0';
+    if(strcmp(buf, "quit")==0 || strcmp(buf, "exit")==0) {
+      free(buf);
+      break;
+    }
+    const int send_addr = atoi(buf);
+    free(buf);
+    if(send_addr<0 || send_addr > BROADCAST_ADDR) {
+      printf("invalid address. Please try again.\n");
+      continue;
+    }
+
+    buf = NULL;
+    size = 0; 
+    printf("Type a message to send: ");fflush(stdout);
     if((size=getline(&buf, &size, stdin)) != -1) {
       buf[--size] = '\0';
-      if(strcmp(buf, "quit")==0 || strcmp(buf, "exit")==0) {
-        free(buf);
-        break;
-      }
-      printf("Attempting to send \"%s\"...\n", buf);
+      printf("Attempting to send \"%s\" (%d->%d)...\n", buf, MY_ID, send_addr);
       if(size > MAX_MSG_SIZE) {
         printf("FAIL: msg must be <= %d chars\n", MAX_MSG_SIZE);
       } else {
-        send(buf, size, OTHER_ID, MY_ID);
-        printf("Completed.\n");
+        if(send(buf, size, send_addr, MY_ID, true) == 0) {
+          printf("We got an ack\n");
+        } else printf("Completed but no ack received.\n");
       }
     }
     free(buf);
