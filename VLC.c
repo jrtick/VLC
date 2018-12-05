@@ -285,12 +285,15 @@ restart_receive:
     }
 
     /** acknowledge successful receipt if intended recipient **/
+    printf("hi! snooping message %d->%d\n", from_addr, to_addr);
     if(from_addr != MY_ID && (to_addr==MY_ID || to_addr==BROADCAST_ADDR)) {
+      printf("we entered here -.-\n");
       if(strcmp("ack", buf) == 0) {
         ack_received |= (1<<from_addr);
       } else {
         if(ack_requested) {
           delayMicroseconds(5*SAMPLE_PERIOD_US);
+          printf("sending ack\n");
           send("ack", 3, from_addr, MY_ID, false);
         }
 
@@ -391,9 +394,13 @@ int main() {
       if(size > MAX_MSG_SIZE) {
         printf("FAIL: msg must be <= %d chars\n", MAX_MSG_SIZE);
       } else {
-        if(send(buf, size, send_addr, MY_ID, true) == 0) {
-          printf("We got an ack\n");
-        } else printf("Completed but no ack received.\n");
+        const int result = send(buf, size, send_addr, MY_ID, true);
+        if(result == 0) printf("NO ACK\n");
+        else {
+          for(int i=0;i<BROADCAST_ADDR;i++) {
+            if(result & (1<<i)) printf("We got an ack from %d\n", i);
+          }
+        }
       }
     }
     free(buf);
