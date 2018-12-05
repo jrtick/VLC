@@ -31,7 +31,7 @@
 // preamble and postamble send least significant bit first
 #define PREAMBLE  0b01010101
 #define POSTAMBLE 0b00100100
-#define MAX_MSG_SIZE 124 // bytes
+#define MAX_MSG_SIZE 60 // bytes
 #define PACKET_PERIOD_US ((8/PPM_BITS)*PPM_PERIOD_US*(MAX_MSG_SIZE+4))
 #define BROADCAST_ADDR 0xF // this is broadcast address, all others must be below
 
@@ -285,15 +285,12 @@ restart_receive:
     }
 
     /** acknowledge successful receipt if intended recipient **/
-    printf("hi! snooping message %d->%d\n", from_addr, to_addr);
     if(from_addr != MY_ID && (to_addr==MY_ID || to_addr==BROADCAST_ADDR)) {
-      printf("we entered here -.-\n");
       if(strcmp("ack", buf) == 0) {
         ack_received |= (1<<from_addr);
       } else {
         if(ack_requested) {
           delayMicroseconds(5*SAMPLE_PERIOD_US);
-          printf("sending ack\n");
           send("ack", 3, from_addr, MY_ID, false);
         }
 
@@ -380,7 +377,7 @@ int main() {
     }
     const int send_addr = atoi(buf);
     free(buf);
-    if(send_addr<0 || send_addr > BROADCAST_ADDR) {
+    if((buf[0]<'0' || buf[0]>'9') || send_addr<0 || send_addr > BROADCAST_ADDR) {
       printf("invalid address. Please try again.\n");
       continue;
     }
