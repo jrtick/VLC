@@ -376,12 +376,13 @@ int main() {
       break;
     }
     const int send_addr = atoi(buf);
-    free(buf);
     if((buf[0]<'0' || buf[0]>'9') || send_addr<0 || send_addr > BROADCAST_ADDR) {
       printf("invalid address. Please try again.\n");
+      free(buf);
       continue;
     }
 
+    free(buf);
     buf = NULL;
     size = 0; 
     printf("Type a message to send: ");fflush(stdout);
