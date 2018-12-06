@@ -18,6 +18,7 @@
     printf("assertion '%s' failed at line %d\n", STR(cond), __LINE__); \
     exit(-1); \
   }
+//#define DEBUG_INFO
 
 // hardware defines
 #define LED_PIN 25 // GPIO
@@ -64,26 +65,32 @@ int send_PPM(const char* buf, const int byte_count) {
     int contended = -1;
 slow_sensing:
     contended++;
+#ifdef DEBUG_INFO
     if(contended>1) {
       printf(".");
       fflush(stdout);
     }
+#endif
     start = micros();
     while(micros()-start < SLOW_SENSING_PERIOD_US) {
       float val = 0;
       for(int i=0;i<4;i++) val += readADC();
       if(val/4 > high_cutoff) {
+#ifdef DEBUG_INFO
         if(contended==0) {
           printf("CONTENDED...");
           fflush(stdout);
         }
+#endif
 
         // random backoff if collision detected
         delayMicroseconds(RANDOM_BACKOFF_LOW_US+(rand() % RANDOM_BACKOFF_RANGE_US));
         goto slow_sensing;
       }
     }
+#ifdef DEBUG_INFO
     if(contended>0) printf("GOING\n");
+#endif
   }
 #endif
 
@@ -114,8 +121,6 @@ slow_sensing:
 
 
 
-static volatile int count_buf_index = 0;
-static int count_buf[1000];
 // receives one period of PPM
 inline char receivePPM() {
   int buf[(8/PPM_BITS)*PPM_SLOT_COUNT]={0};
@@ -161,11 +166,13 @@ int send(const char* msg, const int msg_len,
   buf[count++] = POSTAMBLE;
 
   /** SEND FRAME, print it for debugging **/
+#ifdef DEBUG_INFO
   for(int i=0;i<count;i++) {
     for(int j=0;j<8;j++) printf("%d", (buf[i] >> j) & 1);
     printf(".");
   }
   printf("\n");
+#endif
 
   ack_received = 0;
   send_PPM(buf, count);
@@ -176,7 +183,7 @@ int send(const char* msg, const int msg_len,
     if(to_addr == BROADCAST_ADDR) {
       while((micros()-start)<20*PACKET_PERIOD_US);
     } else {
-      while((micros()-start)<PACKET_PERIOD_US && ack_received == 0);
+      while((micros()-start)<2*PACKET_PERIOD_US && ack_received == 0);
     }
     return ack_received;
   } else return 0;
@@ -187,13 +194,6 @@ void* receive_loop(void* const arg) {
 
   while(!end_of_program) {
 restart_receive:
-    if(count_buf_index) {
-      for(int i=0;i<count_buf_index;i+=2) {
-        printf("%d vs %d\n", count_buf[i], count_buf[i+1]);
-      }
-      count_buf_index = 0;
-    }
-
     /** wait for a signal **/
     while(readADC() < high_cutoff) {
       if(end_of_program) return arg;
@@ -258,8 +258,10 @@ restart_receive:
 
       if(msg_size >= MAX_MSG_SIZE) {
         digitalWrite(LED_PIN, 0);
+#ifdef DEBUG_INFO
         printf("invalid params (to=%d, from=%d, msg_size=%d\n",
                to_addr, from_addr, msg_size);
+#endif
         goto restart_receive;
       }
     }
@@ -275,11 +277,13 @@ restart_receive:
       const char received = receivePPM();
       digitalWrite(LED_PIN, 0);
       if(received != POSTAMBLE) {
+#ifdef DEBUG_INFO
         printf("failed POSTAMBLE (detected 0x%x)\n", received);
         printf("to=%d,from=%d,msglen=%d\n", to_addr, from_addr, msg_size);
         printf("message would've been: ");
         for(int i=0;i<msg_size;i++) printf("0x%x ", buf[i]);
         printf("\n", buf);
+#endif
         goto restart_receive;
       }
     }
@@ -290,13 +294,12 @@ restart_receive:
         ack_received |= (1<<from_addr);
       } else {
         if(ack_requested) {
-          delayMicroseconds(5*SAMPLE_PERIOD_US);
+          delayMicroseconds(2*SAMPLE_PERIOD_US);
           send("ack", 3, from_addr, MY_ID, false);
         }
 
         // print received msg
-        printf("(%d -> %d) MSG RECEIVED (%d): \"%s\"\n",
-                 from_addr, to_addr, msg_size, buf);
+        // printf("(%d -> %d) MSG RECEIVED (%d): \"%s\"\n", from_addr, to_addr, msg_size, buf);
       }
     }
   }
@@ -321,7 +324,7 @@ int main() {
 
   // init pins
   pinMode(LED_PIN, OUTPUT);
-
+  digitalWrite(LED_PIN, 0);
 
   // print configuration
   ASSERT(PPM_PERIOD_US % (1<<PPM_BITS) == 0);
@@ -403,6 +406,16 @@ int main() {
     }
     free(buf);
   }
+
+  /*{
+    char buf[1024] = {'h','e','l','l','o','!'};
+    int acks = 0;
+    for(int i=0;i<1000;i++) {
+      const int result = send(buf, 6, 3, MY_ID, true);
+      if(result & (1<<3)) acks++;
+    }
+    printf("We got %d acks\n", acks);
+  }*/
 
 #ifndef SEND_ONLY
   end_of_program = true;
