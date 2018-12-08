@@ -1,11 +1,16 @@
+/** This is a helper program for debugging of our system.
+ * It can read the current value of the ADC, print ADC speed stats,
+ * or even write ADC values to a file for a certain amount of time.
+ * This helped us look at timing for our project so that we could
+ * hand decode bits to make sure they were being modulated correctly.
+ */
+
 #include <wiringPi.h>
 #include "adc_lib.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-
-/** ADC READER **/
 
 typedef enum {READ, WRITE, STATS} ProgramMode;
 

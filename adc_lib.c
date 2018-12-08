@@ -12,6 +12,7 @@
 #define MSB_FIRST 0
 
 int initADC(){
+  // The ADC communicates using SPI
   return wiringPiSPISetup(SPI_CHANNEL, SPI_CLOCK);
 }
 
@@ -25,7 +26,7 @@ inline float readADC_internal() {
     return -2*V_REF; // just so it's clearly wrong
   } else {
     const int value = ((buf[0]<<8) | buf[1])>>1;
-    // convert raw ACd value to voltage based on Vref
+    // convert raw ADC value to voltage based on Vref
     return (V_REF*1.f*value) / (1<<ADC_RESOLUTION);
   }
 }

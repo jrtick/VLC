@@ -1,9 +1,13 @@
+/** This is just a simple program to turn on/off rpi gpio pins
+ * using the Wiring Pi library for debug purposes. It lets us make
+ * sure hardware connections are sound.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <wiringPi.h>
 #include <string.h>
 
-// just a simple function to turn on/off rpi gpio pins for debug purposes
 int main(const int argc, const char* argv[]) {
   if(argc != 3) {
     printf("usage: ./%s [pin #] [HIGH or LOW]\n", argv[0]);
